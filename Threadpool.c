@@ -15,6 +15,7 @@ typedef struct {
     int task_count;
     int front;
     int rear;
+    int count;  // To track the number of tasks in the queue
     pthread_mutex_t lock;
     pthread_cond_t notify;
 } task_queue_t;
@@ -35,11 +36,13 @@ void thread_pool_destroy(thread_pool_t *pool);
 
 // Thread pool creation
 thread_pool_t* thread_pool_create(int thread_count, int queue_size) {
-    thread_pool_t *pool = malloc(sizeof(thread_pool_t));
-    pool->threads = malloc(sizeof(pthread_t) * thread_count);
-    pool->queue.tasks = malloc(sizeof(task_t) * queue_size);
+    thread_pool_t *pool = (thread_pool_t *)malloc(sizeof(thread_pool_t));
+    pool->threads = (pthread_t *)malloc(sizeof(pthread_t) * thread_count);
+    pool->queue.tasks = (task_t *)malloc(sizeof(task_t) * queue_size);
     pool->queue.task_count = queue_size;
-    pool->queue.front = pool->queue.rear = 0;
+    pool->queue.front = 0;
+    pool->queue.rear = 0;
+    pool->queue.count = 0;
     pthread_mutex_init(&(pool->queue.lock), NULL);
     pthread_cond_init(&(pool->queue.notify), NULL);
     pool->thread_count = thread_count;
@@ -60,6 +63,7 @@ void thread_pool_add(thread_pool_t *pool, void (*function)(void *), void *arg) {
     pool->queue.tasks[pool->queue.rear].function = function;
     pool->queue.tasks[pool->queue.rear].arg = arg;
     pool->queue.rear = (pool->queue.rear + 1) % pool->queue.task_count;
+    pool->queue.count++;
 
     pthread_cond_signal(&(pool->queue.notify));
     pthread_mutex_unlock(&(pool->queue.lock));
@@ -71,8 +75,8 @@ void *thread_pool_worker(void *arg) {
     while(1) {
         pthread_mutex_lock(&(pool->queue.lock));
 
-        // Wait for task
-        while(pool->queue.front == pool->queue.rear && !pool->shutdown) {
+        // Wait for a task to be available
+        while(pool->queue.count == 0 && !pool->shutdown) {
             pthread_cond_wait(&(pool->queue.notify), &(pool->queue.lock));
         }
 
@@ -85,6 +89,7 @@ void *thread_pool_worker(void *arg) {
         // Get task
         task_t task = pool->queue.tasks[pool->queue.front];
         pool->queue.front = (pool->queue.front + 1) % pool->queue.task_count;
+        pool->queue.count--;
 
         pthread_mutex_unlock(&(pool->queue.lock));
 
@@ -120,11 +125,12 @@ void example_task(void *arg) {
     sleep(1); // Simulate task processing
 }
 
+// Main function to demonstrate the thread pool
 int main() {
     thread_pool_t *pool = thread_pool_create(4, 10);
 
     for(int i = 0; i < 10; i++) {
-        int *arg = malloc(sizeof(int));
+        int *arg = (int *)malloc(sizeof(int));
         *arg = i + 1;
         thread_pool_add(pool, example_task, (void *)arg);
     }
